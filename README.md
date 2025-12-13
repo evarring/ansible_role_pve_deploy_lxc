@@ -1,4 +1,4 @@
-pve_lxc_deploy
+pve_deploy_lxc
 =========
 
 Ansible role to deploy, configure and destroy lxc containers on Proxmox VE
@@ -13,7 +13,7 @@ Requirements
 
 - Proxmox VE api token
 - LXC template - feel free to choose the lxc container image from <https://images.linuxcontainers.org/> and make sure you get the cloud one as it has cloud-init package installed.
-  You can use the download tag and pve_lxc_deploy_dl_template variable to automate it.
+  You can use the download tag and pve_deploy_lxc_dl_template variable to automate it.
 - proxmoxer python package
 - community.proxmox collection
 
@@ -23,17 +23,17 @@ Role Variables
 Proxmox VE host connection variables:
 
 ```yaml
-pve_lxc_deploy_proxmox_api_ip: "10.0.0.10"
-pve_lxc_deploy_proxmox_api_token_user: "root@pam"
-pve_lxc_deploy_proxmox_api_token_id: "proxmox"
-pve_lxc_deploy_proxmox_api_token_secret: dy8293yruqewbfijbaifb389rfbe
-pve_lxc_deploy_node: "nodename01"
+pve_deploy_lxc_proxmox_api_ip: "10.0.0.10"
+pve_deploy_lxc_proxmox_api_token_user: "root@pam"
+pve_deploy_lxc_proxmox_api_token_id: "proxmox"
+pve_deploy_lxc_proxmox_api_token_secret: dy8293yruqewbfijbaifb389rfbe
+pve_deploy_lxc_node: "nodename01"
 ```
 
 LXC container template download variable:
 
 ```yaml
-pve_lxc_deploy_dl_template:
+pve_deploy_lxc_dl_template:
   storage: local # Proxmox VE storage ID which has Container template storage option
   url: "https://images.linuxcontainers.org/images/almalinux/9/amd64/cloud/20250729_23:08/rootfs.tar.xz"
   template: "lxc-almalinux9.tar.xz" # the final template filename on the Proxmox VE host
@@ -43,7 +43,7 @@ pve_lxc_deploy_dl_template:
 LXC container variables:
 
 ```yaml
-pve_lxc_deploy_container:
+pve_deploy_lxc_container:
   hostname: "hostname.fqdn.net"
   vmid: 100
   password: "{{ ansible_password }}"
@@ -84,7 +84,7 @@ Example Playbook
   tasks:
     - name: Import role
       ansible.builtin.include_role:
-        name: pve_lxc_deploy
+        name: pve_deploy_lxc
       tags: always
 ...
 ```

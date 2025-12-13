@@ -3,4 +3,4 @@
 - hosts: localhost
   remote_user: root
   roles:
-    - pve_lxc_deploy
+    - pve_deploy_lxc

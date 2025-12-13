@@ -1,108 +1,164 @@
 # SPDX-License-Identifier: MIT-0
 ---
-# tasks file for pve_lxc_deploy
+# tasks file for pve_deploy_lxc
 
-- name: Download lxc container template from web
-  community.proxmox.proxmox_template:
-    api_host: "{{ pve_lxc_deploy_proxmox_api_ip }}"
-    api_user: "{{ pve_lxc_deploy_proxmox_api_token_user }}"
-    api_token_id: "{{ pve_lxc_deploy_proxmox_api_token_id }}"
-    api_token_secret: "{{ pve_lxc_deploy_proxmox_api_token_secret }}"
-    node: "{{ pve_lxc_deploy_node }}"
-    storage: "{{ pve_lxc_deploy_dl_template.storage | default('local') }}"
-    content_type: vztmpl
-    url: "{{ pve_lxc_deploy_dl_template.url }}"
-    template: "{{ pve_lxc_deploy_dl_template.name }}"
-    force: "{{ pve_lxc_deploy_dl_template.name | default(false) }}"
-  tags: download
-  when: pve_lxc_deploy_dl_template is defined
+# Optional toggle to hide secrets from logs:
+#   pve_deploy_lxc_no_log: true|false    (default true)
 
-- name: Stop and remove the lxc container
+- name: Proxmox API tasks (defaults + lifecycle)
   delegate_to: localhost
-  tags: stop, destroy, redeploy
+  module_defaults:
+    community.proxmox.proxmox:
+      api_host: "{{ pve_deploy_lxc_proxmox_api_ip }}"
+      api_user: "{{ pve_deploy_lxc_proxmox_api_token_user }}"
+      api_token_id: "{{ pve_deploy_lxc_proxmox_api_token_id }}"
+      api_token_secret: "{{ pve_deploy_lxc_proxmox_api_token_secret }}"
+      node: "{{ pve_deploy_lxc_node }}"
+    community.proxmox.proxmox_vm_info:
+      api_host: "{{ pve_deploy_lxc_proxmox_api_ip }}"
+      api_user: "{{ pve_deploy_lxc_proxmox_api_token_user }}"
+      api_token_id: "{{ pve_deploy_lxc_proxmox_api_token_id }}"
+      api_token_secret: "{{ pve_deploy_lxc_proxmox_api_token_secret }}"
+    community.proxmox.proxmox_template:
+      api_host: "{{ pve_deploy_lxc_proxmox_api_ip }}"
+      api_user: "{{ pve_deploy_lxc_proxmox_api_token_user }}"
+      api_token_id: "{{ pve_deploy_lxc_proxmox_api_token_id }}"
+      api_token_secret: "{{ pve_deploy_lxc_proxmox_api_token_secret }}"
+      node: "{{ pve_deploy_lxc_node }}"
+  no_log: "{{ pve_deploy_lxc_no_log | default(false) }}"
   block:
-    - name: Get initial lxc container status
-      community.proxmox.proxmox_vm_info:
-        name: "{{ pve_lxc_deploy_container.hostname }}"
-        api_host: "{{ pve_lxc_deploy_proxmox_api_ip }}"
-        api_user: "{{ pve_lxc_deploy_proxmox_api_token_user }}"
-        api_token_id: "{{ pve_lxc_deploy_proxmox_api_token_id }}"
-        api_token_secret: "{{ pve_lxc_deploy_proxmox_api_token_secret }}"
-        type: lxc
-      register: lxcstatus
+    - name: Download LXC container template from web (optional)
+      community.proxmox.proxmox_template:
+        storage: "{{ pve_deploy_lxc_dl_template.storage | default('local') }}"
+        content_type: vztmpl
+        checksum: "{{ pve_deploy_lxc_dl_template.checksum | default(omit) }}"
+        checksum_algorithm: "{{ pve_deploy_lxc_dl_template.checksum_algorithm | default(omit) }}"
+        url: "{{ pve_deploy_lxc_dl_template.url }}"
+        template: "{{ pve_deploy_lxc_dl_template.template }}"
+        force: "{{ pve_deploy_lxc_dl_template.force | default(false) | bool }}"
+      tags: [download]
+      when:
+        - pve_deploy_lxc_dl_template is defined
+        - pve_deploy_lxc_dl_template.url is defined
+        - pve_deploy_lxc_dl_template.template is defined
 
-    - name: Stop the lxc container if it is running
+    - name: Get current container info (by name)
+      community.proxmox.proxmox_vm_info:
+        type: lxc
+        name: "{{ pve_deploy_lxc_container.hostname }}"
+      register: lxc_info
+      failed_when: false
+      changed_when: false
+      tags: [always]
+
+    - name: Derive current VMID (if container exists)
+      ansible.builtin.set_fact:
+        pve_deploy_lxc_current_vmid: >-
+          {{ (lxc_info.proxmox_vms | default([]) | length > 0)
+             | ternary(lxc_info.proxmox_vms[0].vmid, omit) }}
+        pve_deploy_lxc_current_status: >-
+          {{ (lxc_info.proxmox_vms | default([]) | length > 0)
+             | ternary(lxc_info.proxmox_vms[0].status | default('unknown'), 'absent') }}
+      changed_when: false
+      tags: [always]
+
+    - name: Stop container (only if tag-selected and running)
       community.proxmox.proxmox:
-        hostname: "{{ pve_lxc_deploy_container.hostname }}"
-        api_host: "{{ pve_lxc_deploy_proxmox_api_ip }}"
-        api_user: "{{ pve_lxc_deploy_proxmox_api_token_user }}"
-        api_token_id: "{{ pve_lxc_deploy_proxmox_api_token_id }}"
-        api_token_secret: "{{ pve_lxc_deploy_proxmox_api_token_secret }}"
+        vmid: "{{ pve_deploy_lxc_current_vmid }}"
         state: stopped
         force: true
       when:
-        - lxcstatus.proxmox_vms is defined
-        - lxcstatus.proxmox_vms[0].status is defined
+        - ("redeploy" in (ansible_run_tags | default([]))) or
+          ("stop" in (ansible_run_tags | default([])))
+        - pve_deploy_lxc_current_status == 'running'
+        - pve_deploy_lxc_current_vmid is defined
+      tags: [stop, redeploy]
 
-- name: Destroy the lxc container
-  community.proxmox.proxmox:
-    hostname: "{{ pve_lxc_deploy_container.hostname }}"
-    api_host: "{{ pve_lxc_deploy_proxmox_api_ip }}"
-    api_user: "{{ pve_lxc_deploy_proxmox_api_token_user }}"
-    api_token_id: "{{ pve_lxc_deploy_proxmox_api_token_id }}"
-    api_token_secret: "{{ pve_lxc_deploy_proxmox_api_token_secret }}"
-    purge: true
-    force: true
-    state: absent
-  delegate_to: localhost
-  tags: destroy, redeploy
+    - name: Destroy container (only if tag-selected and present)
+      community.proxmox.proxmox:
+        vmid: "{{ pve_deploy_lxc_current_vmid }}"
+        state: absent
+        purge: true
+        force: true
+      when:
+        - ("redeploy" in (ansible_run_tags | default([]))) or
+          ("destroy" in (ansible_run_tags | default([])))
+        - pve_deploy_lxc_current_status != 'absent'
+        - pve_deploy_lxc_current_vmid is defined
+      tags: [destroy, redeploy]
 
-- name: Create the lxc container
-  community.proxmox.proxmox:
-    vmid: "{{ pve_lxc_deploy_container.vmid | default(omit) }}"
-    api_host: "{{ pve_lxc_deploy_proxmox_api_ip }}"
-    api_user: "{{ pve_lxc_deploy_proxmox_api_token_user }}"
-    api_token_id: "{{ pve_lxc_deploy_proxmox_api_token_id }}"
-    api_token_secret: "{{ pve_lxc_deploy_proxmox_api_token_secret }}"
-    node: "{{ pve_lxc_deploy_node }}"
-    password: "{{ pve_lxc_deploy_container.password }}"
-    cores: "{{ pve_lxc_deploy_container.cores | default(2) }}"
-    cpus: "{{ pve_lxc_deploy_container.cpus | default(1) }}"
-    memory: "{{ pve_lxc_deploy_container.memory | default(1024) }}"
-    description: "{{ pve_lxc_deploy_container.description | default(omit) }}"
-    mount_volumes: "{{ pve_lxc_deploy_container.mount_volumes | default(omit) }}"
-    disk_volume: "{{ pve_lxc_deploy_container.disk_volume | default(omit) }}"
-    hostname: "{{ pve_lxc_deploy_container.hostname }}"
-    searchdomain: "{{ pve_lxc_deploy_container.searchdomain | default(omit) }}"
-    nameserver: "{{ pve_lxc_deploy_container.nameserver | default(omit) }}"
-    ostemplate: "{{ pve_lxc_deploy_container.ostemplate }}"
-    pubkey: "{{ pve_lxc_deploy_container.pubkey | join('\n') | default(omit) }}"
-    ostype: "{{ pve_lxc_deploy_container.ostype | default(omit) }}"
-    storage: "{{ pve_lxc_deploy_container.storage | default(omit) }}"
-    tags: "{{ pve_lxc_deploy_container.tags | default(omit) }}"
-    pool: "{{ pve_lxc_deploy_container.pool | default(omit) }}"
-    unprivileged: "{{ pve_lxc_deploy_container.unprivileged | default(true) }}"
-    netif: "{{ pve_lxc_deploy_container.netif }}"
-  delegate_to: localhost
-  tags: redeploy, deploy
-  register: create_result
-  retries: 5
-  delay: 3
-  until: create_result is succeeded
+    # Re-check existence after potential destroy so deploy is idempotent even with tags.
+    - name: Refresh container info (post-redeploy)
+      community.proxmox.proxmox_vm_info:
+        type: lxc
+        name: "{{ pve_deploy_lxc_container.hostname }}"
+      register: lxc_info_after
+      failed_when: false
+      changed_when: false
+      tags: [always]
 
-- name: Start the lxc container
-  community.proxmox.proxmox:
-    hostname: "{{ pve_lxc_deploy_container.hostname }}"
-    api_host: "{{ pve_lxc_deploy_proxmox_api_ip }}"
-    api_user: "{{ pve_lxc_deploy_proxmox_api_token_user }}"
-    api_token_id: "{{ pve_lxc_deploy_proxmox_api_token_id }}"
-    api_token_secret: "{{ pve_lxc_deploy_proxmox_api_token_secret }}"
-    timeout: 5
-    state: started
-  delegate_to: localhost
-  tags: start
-  register: startlxc
-  retries: 10
-  delay: 3
-  until: startlxc is succeeded
+    - name: Create container (only if absent)
+      community.proxmox.proxmox:
+        vmid: "{{ pve_deploy_lxc_container.vmid | default(omit) }}"
+        password: "{{ pve_deploy_lxc_container.password }}"
+        hostname: "{{ pve_deploy_lxc_container.hostname }}"
+        ostemplate: "{{ pve_deploy_lxc_container.ostemplate }}"
+        netif: "{{ pve_deploy_lxc_container.netif }}"
+        features: "{{ pve_deploy_lxc_container.features | default(omit) }}"
+        force: "{{ pve_deploy_lxc_container.force | default(omit) }}"
+        timezone: "{{ pve_deploy_lxc_container.timezone | default('host') }}"
+        state: "{{ pve_deploy_lxc_container.state | default(omit) }}"
+        onboot: "{{ pve_deploy_lxc_container.onboot | default(omit) }}"
+
+        # resources
+        cores: "{{ pve_deploy_lxc_container.cores | default(2) }}"
+        cpus: "{{ pve_deploy_lxc_container.cpus | default(1) }}"
+        memory: "{{ pve_deploy_lxc_container.memory | default(1024) }}"
+        swap: "{{ pve_deploy_lxc_container.swap | default(omit) }}"
+
+        # optional metadata
+        description: "{{ pve_deploy_lxc_container.description | default(omit) }}"
+        tags: "{{ pve_deploy_lxc_container.tags | default(omit) }}"
+        pool: "{{ pve_deploy_lxc_container.pool | default(omit) }}"
+
+        # storage / mounts
+        storage: "{{ pve_deploy_lxc_container.storage | default(omit) }}"
+        mount_volumes: "{{ pve_deploy_lxc_container.mount_volumes | default(omit) }}"
+        mounts: "{{ pve_deploy_lxc_container.mounts | default(omit) }}"
+        disk_volume: "{{ pve_deploy_lxc_container.disk_volume | default(omit) }}"
+        disk: "{{ pve_deploy_lxc_container.disk | default(omit) }}"
+        hookscript: "{{ pve_deploy_lxc_container.hookscript | default(omit) }}"
+
+        # network / dns
+        searchdomain: "{{ pve_deploy_lxc_container.searchdomain | default(omit) }}"
+        nameserver: "{{ pve_deploy_lxc_container.nameserver | default(omit) }}"
+
+        # os / access
+        ostype: "{{ pve_deploy_lxc_container.ostype | default(omit) }}"
+        unprivileged: "{{ pve_deploy_lxc_container.unprivileged | default(true) }}"
+        pubkey: >-
+          {{ (pve_deploy_lxc_container.pubkey | default([])) | join('\n')
+             if (pve_deploy_lxc_container.pubkey is defined) else omit }}
+      register: create_result
+      retries: 5
+      delay: 3
+      until: create_result is succeeded
+      when: (lxc_info_after.proxmox_vms | default([]) | length) == 0
+      tags: [deploy, redeploy]
+
+    - name: Start container (only if not running)
+      community.proxmox.proxmox:
+        vmid: >-
+          {{ (pve_deploy_lxc_container.vmid | default(omit))
+             if (pve_deploy_lxc_container.vmid is defined)
+             else (pve_deploy_lxc_current_vmid | default(omit)) }}
+        state: started
+        timeout: 5
+      register: start_lxc
+      retries: 10
+      delay: 3
+      until: start_lxc is succeeded
+      when:
+        - pve_deploy_lxc_current_status != 'running'
+      tags: [start]
 ...
