@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT-0
 galaxy_info:
   author: Evar Ring
-  description: Ansible role for deploying an lxc container on Proxmox VE
+  description: Ansible role for deploying LXC containers on Proxmox VE
   license: MIT
 
   min_ansible_version: "2.18.6"
